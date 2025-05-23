@@ -58,6 +58,10 @@ resource "aws_dynamodb_table" "appointments_table" {
     projection_type = "ALL"
   }
 
+  point_in_time_recovery {
+    enabled = true
+  }
+
   tags = {
     Name        = "AppointmentsTable"
     Environment = "dev"
@@ -97,6 +101,10 @@ resource "aws_dynamodb_table" "services_table" {
     type = "N"
   }
 
+  point_in_time_recovery {
+    enabled = true
+  }
+
   tags = {
     Name        = "ServicesTable"
     Environment = "dev"
@@ -130,6 +138,10 @@ resource "aws_dynamodb_table" "locations_table" {
   attribute {
     name = "operatingHours" # e.g., "Mon-Fri 9am-5pm, Sat 10am-2pm" or JSON string
     type = "S"
+  }
+
+  point_in_time_recovery {
+    enabled = true
   }
 
   tags = {

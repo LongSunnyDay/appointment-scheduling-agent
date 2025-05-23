@@ -23,10 +23,10 @@ resource "aws_s3_bucket" "terraform_state_bucket" {
 
   # It's good practice to block public access, though by default new S3 buckets
   # have public access blocked. Explicitly defining it is safer.
-  # block_public_acls       = true
-  # block_public_policy     = true
-  # ignore_public_acls      = true
-  # restrict_public_buckets = true
+  block_public_acls       = true
+  block_public_policy     = true
+  ignore_public_acls      = true
+  restrict_public_buckets = true
 
   tags = {
     Name        = "TerraformStateBucket"
