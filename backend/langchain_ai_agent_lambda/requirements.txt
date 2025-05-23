@@ -1,0 +1,11 @@
+boto3>=1.20.0  # For AWS SDK, including Secrets Manager
+langchain>=0.1.0 # Core Langchain library
+
+# Specific LLM provider packages can be added later, e.g.:
+# langchain-openai
+# langchain-anthropic
+# langchain-google-genai
+
+# Other potential dependencies:
+# requests  # For making HTTP requests if the LLM API is custom or not directly supported
+# aws-lambda-powertools # For structured logging, metrics, tracing, etc. (optional but recommended)

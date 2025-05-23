@@ -1,0 +1,7 @@
+boto3>=1.20.0  # For AWS SDK (DynamoDB, SQS, SNS, etc.)
+
+# Other potential dependencies for actual implementation:
+# aws-lambda-powertools
+# google-api-python-client # If direct Google Calendar interaction is needed here
+# oauth2client # For Google Auth
+# cryptography # If dealing with secure tokens that need signing/verification beyond simple strings
