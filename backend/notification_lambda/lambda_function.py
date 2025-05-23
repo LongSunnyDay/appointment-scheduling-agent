@@ -1,23 +1,97 @@
 import json
 import logging
 import os
-import boto3
+# import boto3 # Not strictly needed for stubbed notifications
 
 # Initialize logger
 logger = logging.getLogger()
 logger.setLevel(os.environ.get("LOG_LEVEL", "INFO"))
 
-# Initialize Boto3 client for SNS outside the handler for potential reuse
-# This is generally recommended for performance in Lambda.
-# sns_client = boto3.client('sns')
+# APPOINTMENTS_TABLE_NAME = os.environ.get('APPOINTMENTS_TABLE_NAME') # Not used for now, as SQS message is self-contained
 
-# Environment variables for SNS Topic ARNs (can be set in Lambda configuration)
-# CLIENT_NOTIFICATION_TOPIC_ARN = os.environ.get('CLIENT_NOTIFICATION_TOPIC_ARN')
-# STAFF_NOTIFICATION_TOPIC_ARN = os.environ.get('STAFF_NOTIFICATION_TOPIC_ARN')
+# --- Stubbed Notification Sending Function ---
+def stub_send_notification(recipient_contact, subject, body):
+    """
+    Stub function to simulate sending a notification.
+    Logs the recipient, subject, and body.
+    """
+    logger.info(f"[STUB_NOTIFICATION] Sending notification to: {recipient_contact}")
+    logger.info(f"[STUB_NOTIFICATION] Subject: {subject}")
+    logger.info(f"[STUB_NOTIFICATION] Body: {body}")
+    # In a real scenario, this would use boto3 to send email via SES, SMS via SNS, or other methods.
+    return True # Simulate successful send
+
+# --- Notification Formatting and Dispatch Logic ---
+def format_and_send_notification(notification_type, message_details, booking_id_log_ctx):
+    """
+    Formats notification content based on notificationType and calls the stub sender.
+    """
+    subject = ""
+    body = ""
+    recipient_contact = message_details.get('recipient') # General recipient field from SQS
+
+    if not recipient_contact:
+        logger.error(f"[{booking_id_log_ctx}] Recipient contact missing in message_details. Cannot send notification.")
+        return False
+
+    client_name = message_details.get('clientName', 'Valued Client')
+    service_name = message_details.get('serviceName', 'your selected service')
+    start_time = message_details.get('startTime', 'the scheduled time')
+    location_name = message_details.get('locationName', 'our location')
+    # reason = message_details.get('reason', 'as per our records') # For cancellation/rejection
+
+    if notification_type == "BOOKING_CONFIRMED":
+        subject = f"Booking Confirmed: Your Appointment for {service_name}"
+        body = (
+            f"Dear {client_name},\n\n"
+            f"This email confirms your booking for {service_name} at {location_name} on {start_time}.\n\n"
+            f"We look forward to seeing you!\n\n"
+            f"Booking ID: {booking_id_log_ctx}"
+        )
+    elif notification_type == "BOOKING_CANCELLED":
+        subject = f"Booking Cancellation Notice: {service_name}"
+        body = (
+            f"Dear {client_name},\n\n"
+            f"This email confirms the cancellation of your booking for {service_name} at {location_name} scheduled for {start_time}.\n\n"
+            f"If you did not request this cancellation, or if you have any questions, please contact us.\n\n"
+            f"Booking ID: {booking_id_log_ctx}"
+        )
+    elif notification_type == "BOOKING_REJECTED":
+        rejection_reason = message_details.get('reason', "Unfortunately, we are unable to confirm your requested appointment at this time.")
+        subject = f"Regarding Your Booking Request for {service_name}"
+        body = (
+            f"Dear {client_name},\n\n"
+            f"Regarding your provisional booking request for {service_name} at {location_name} for {start_time}.\n\n"
+            f"{rejection_reason}\n\n"
+            f"Please contact us if you would like to discuss alternative options.\n\n"
+            f"Booking ID: {booking_id_log_ctx}"
+        )
+    elif notification_type == "PROVISIONAL_BOOKING_CREATED":
+        # Client notification
+        subject = f"Provisional Booking Received: {service_name}"
+        body = (
+            f"Dear {client_name},\n\n"
+            f"We have received your provisional booking request for {service_name} at {location_name} for {start_time}.\n"
+            f"Our team will review the details and confirm your appointment shortly.\n\n"
+            f"Booking ID: {booking_id_log_ctx}"
+        )
+        # Optional: Staff notification (can be added here or by sending another SQS message from originator)
+        # staff_recipient = "staff-alerts@example.com" # Example
+        # staff_subject = f"New Provisional Booking: {booking_id_log_ctx} for {service_name}"
+        # staff_body = f"A new provisional booking (ID: {booking_id_log_ctx}) for {service_name} by {client_name} ({recipient_contact}) at {location_name} for {start_time} requires review."
+        # stub_send_notification(staff_recipient, staff_subject, staff_body)
+        # logger.info(f"[{booking_id_log_ctx}] Staff notification also sent for PROVISIONAL_BOOKING_CREATED.")
+
+    else:
+        logger.warning(f"[{booking_id_log_ctx}] Unknown notification_type: {notification_type}. Cannot format message.")
+        return False
+
+    return stub_send_notification(recipient_contact, subject, body)
+
 
 def lambda_handler(event, context):
     """
-    Handles incoming SQS messages to send notifications via SNS.
+    Handles incoming SQS messages to format and "send" notifications.
     """
     lambda_name = "NotificationLambda"
     logger.info(f"Received event for {lambda_name}: {json.dumps(event)}")
@@ -26,168 +100,197 @@ def lambda_handler(event, context):
     successful_sends = 0
     failed_sends = 0
 
-    # TODO: Initialize SNS client (if not done globally or if specific region needed)
-    sns_client = boto3.client('sns') # Initializing here for clarity per instruction
-
     for record in event.get('Records', []):
-        processed_messages += 1
+        message_id = record.get('messageId', 'UnknownMessageID')
+        booking_id_log_ctx = f"MessageId: {message_id}" # Default logging context
+
         try:
-            logger.info(f"Processing SQS record: {record.get('messageId')}")
+            logger.info(f"Processing SQS record: {message_id}")
             message_body_str = record.get('body')
             if not message_body_str:
-                logger.warning(f"SQS record {record.get('messageId')} has no body. Skipping.")
+                logger.warning(f"[{booking_id_log_ctx}] SQS record has no body. Skipping.")
                 failed_sends +=1
                 continue
 
             message_body = json.loads(message_body_str)
-            logger.info(f"Parsed message body: {json.dumps(message_body)}")
+            logger.info(f"[{booking_id_log_ctx}] Parsed message body: {json.dumps(message_body)}")
 
-            # Extract details from the message body
-            message_content = message_body.get('message_content')
-            recipient_type = message_body.get('recipient_type') # e.g., "client", "staff"
-            contact_info = message_body.get('contact_info')     # e.g., phone, email (might not be directly used if publishing to generic topic)
-            notification_type = message_body.get('notification_type') # e.g., "booking_confirmation", "cancellation_notice", "hitl_alert"
+            # Update logging context if bookingId is available
+            booking_id_from_msg = message_body.get('bookingId', 'UnknownBookingID')
+            booking_id_log_ctx = f"BookingId: {booking_id_from_msg} (MsgId: {message_id})"
 
-            if not all([message_content, recipient_type, notification_type]):
+
+            notification_type = message_body.get('notificationType')
+            message_details = message_body.get('messageDetails') # This should contain all necessary data
+
+            if not notification_type or not isinstance(message_details, dict):
                 logger.error(
-                    f"Missing one or more required fields in message body for record {record.get('messageId')}: "
-                    f"message_content, recipient_type, notification_type. Message: {message_body_str}"
+                    f"[{booking_id_log_ctx}] Missing 'notificationType' or 'messageDetails' (must be a dictionary) in message body. "
+                    f"Message: {message_body_str}"
                 )
-                failed_sends += 1
-                continue
-
-            # Determine the target SNS Topic ARN
-            # This is a simplified logic; real-world might involve more complex routing or direct ARN from message.
-            target_topic_arn = None
-            if recipient_type == "client":
-                target_topic_arn = os.environ.get('CLIENT_NOTIFICATION_TOPIC_ARN', "arn:aws:sns:us-east-1:000000000000:ClientNotificationTopic") # Placeholder
-            elif recipient_type == "staff":
-                target_topic_arn = os.environ.get('STAFF_NOTIFICATION_TOPIC_ARN', "arn:aws:sns:us-east-1:000000000000:StaffNotificationTopic") # Placeholder
-            else:
-                logger.warning(f"Unknown recipient_type: {recipient_type} for record {record.get('messageId')}. Cannot determine SNS topic.")
                 failed_sends += 1
                 continue
             
-            logger.info(f"Target SNS Topic ARN determined: {target_topic_arn}")
-
-            # Construct the message to publish to SNS
-            # SNS message attributes can be used for filtering by subscribers if needed
-            sns_message_attributes = {
-                'notification_type': {
-                    'DataType': 'String',
-                    'StringValue': notification_type
-                },
-                'recipient_type': {
-                    'DataType': 'String',
-                    'StringValue': recipient_type
-                }
-            }
-            if contact_info: # Optional: pass contact_info if subscribers need it (e.g. for direct SMS from SNS if not using a secondary lambda)
-                 sns_message_attributes['contact_info'] = {
-                    'DataType': 'String',
-                    'StringValue': str(contact_info) # Ensure it's a string
-                }
-
-
-            # TODO: Publish message to the appropriate SNS topic
-            try:
-                publish_response = sns_client.publish(
-                    TopicArn=target_topic_arn,
-                    Message=message_content, # For direct subscribers like email, SQS. For SMS, this is the body.
-                    Subject=f"Notification: {notification_type.replace('_', ' ').title()}", # Used by email subscribers
-                    MessageAttributes=sns_message_attributes
-                )
-                logger.info(f"Message published to SNS topic {target_topic_arn} for record {record.get('messageId')}. Message ID: {publish_response.get('MessageId')}")
+            if format_and_send_notification(notification_type, message_details, booking_id_log_ctx):
                 successful_sends += 1
-            except Exception as sns_e:
-                logger.error(f"Failed to publish message to SNS topic {target_topic_arn} for record {record.get('messageId')}: {sns_e}", exc_info=True)
+            else:
                 failed_sends += 1
+            
+            processed_messages += 1
 
         except json.JSONDecodeError as json_e:
-            logger.error(f"Failed to parse JSON from SQS record body for record {record.get('messageId')}: {json_e}. Body was: {message_body_str}", exc_info=True)
+            logger.error(f"[{booking_id_log_ctx}] Failed to parse JSON from SQS record body: {json_e}. Body was: {message_body_str}", exc_info=True)
             failed_sends += 1
         except Exception as e:
-            logger.error(f"Unexpected error processing SQS record {record.get('messageId')}: {e}", exc_info=True)
+            logger.error(f"[{booking_id_log_ctx}] Unexpected error processing SQS record: {e}", exc_info=True)
             failed_sends += 1
             
-    logger.info(f"Finished processing. Total records: {processed_messages}, Successful sends: {successful_sends}, Failed sends: {failed_sends}")
+    logger.info(f"Finished processing. Total records processed in this invocation: {processed_messages}, Successful sends: {successful_sends}, Failed sends: {failed_sends}")
     
+    # For SQS, Lambda's success/failure is for the batch. Individual message failures are logged.
+    # Configure DLQ on the SQS queue for persistent message failures.
     return {
-        "statusCode": 200, # SQS processes messages in batches, a 200 indicates successful invocation of Lambda, not necessarily all messages processed.
-        "body": json.dumps({
-            "status": "success",
-            "messages_processed": processed_messages,
-            "successful_sends": successful_sends,
-            "failed_sends": failed_sends
-        })
+        "status": "completed",
+        "messages_processed_in_invocation": processed_messages,
+        "successful_sends_in_invocation": successful_sends,
+        "failed_sends_in_invocation": failed_sends
     }
 
 if __name__ == '__main__':
     logging.basicConfig(level=logging.INFO)
 
-    # Mock environment variables for local testing
-    os.environ['CLIENT_NOTIFICATION_TOPIC_ARN'] = "arn:aws:sns:us-east-1:123456789012:ClientNotificationTopic-Test"
-    os.environ['STAFF_NOTIFICATION_TOPIC_ARN'] = "arn:aws:sns:us-east-1:123456789012:StaffNotificationTopic-Test"
+    # Example SQS events for different notification types
 
-    example_sqs_event_client = {
+    test_event_confirmed = {
         "Records": [
             {
-                "messageId": "msg1-client",
-                "receiptHandle": "handle1",
+                "messageId": "msg-confirmed-001",
                 "body": json.dumps({
-                    "message_content": "Your booking for 'Service Deluxe' at 10:00 AM on 2024-09-15 is confirmed.",
-                    "recipient_type": "client",
-                    "contact_info": "client@example.com", # or phone for SMS
-                    "notification_type": "booking_confirmation"
-                }),
-                "attributes": {}, "messageAttributes": {}, "md5OfBody": "", "eventSource": "aws:sqs", "eventSourceARN": "", "awsRegion": ""
-            }
-        ]
-    }
-    print("\n--- Testing Client Notification via SQS ---")
-    # In real Lambda, boto3.client('sns') would use Lambda's IAM role.
-    # For local testing, ensure your AWS CLI is configured with permissions or mock boto3.
-    response = lambda_handler(example_sqs_event_client, {})
-    print(json.dumps(response, indent=2))
-
-    example_sqs_event_staff = {
-        "Records": [
-            {
-                "messageId": "msg1-staff",
-                "receiptHandle": "handle2",
-                "body": json.dumps({
-                    "message_content": "HITL Alert: User 'john.doe' requires assistance with booking ID 'XYZ789'.",
-                    "recipient_type": "staff",
-                    "contact_info": "staff-alerts@example.com",
-                    "notification_type": "hitl_alert"
-                }),
-                "attributes": {}, "messageAttributes": {}, "md5OfBody": "", "eventSource": "aws:sqs", "eventSourceARN": "", "awsRegion": ""
-            }
-        ]
-    }
-    print("\n--- Testing Staff Notification via SQS ---")
-    response = lambda_handler(example_sqs_event_staff, {})
-    print(json.dumps(response, indent=2))
-
-    example_sqs_event_batch = {
-        "Records": [
-            {
-                "messageId": "msg1-batch",
-                "body": json.dumps({
-                    "message_content": "Client reminder: Your appointment is tomorrow.",
-                    "recipient_type": "client", "contact_info": "client1@example.com", "notification_type": "appointment_reminder"
+                    "bookingId": "booking123",
+                    "notificationType": "BOOKING_CONFIRMED",
+                    "messageDetails": {
+                        "recipient": "client.confirmed@example.com",
+                        "clientName": "Alice Wonderland",
+                        "serviceName": "Teeth Cleaning",
+                        "startTime": "2024-10-15 at 2:00 PM",
+                        "locationName": "Downtown Dental Clinic"
+                    }
                 })
-            },
-            {
-                "messageId": "msg2-batch-invalid-json",
-                "body": "This is not valid JSON"
-            },
-            {
-                "messageId": "msg3-batch-missing-fields",
-                "body": json.dumps({"message_content": "Staff alert only"}) # Missing recipient_type and notification_type
             }
         ]
     }
-    print("\n--- Testing Batch Notifications with Errors via SQS ---")
-    response = lambda_handler(example_sqs_event_batch, {})
+    print("\n--- Testing BOOKING_CONFIRMED Notification ---")
+    response = lambda_handler(test_event_confirmed, {})
+    print(json.dumps(response, indent=2))
+
+    test_event_cancelled = {
+        "Records": [
+            {
+                "messageId": "msg-cancelled-001",
+                "body": json.dumps({
+                    "bookingId": "booking456",
+                    "notificationType": "BOOKING_CANCELLED",
+                    "messageDetails": {
+                        "recipient": "client.cancelled@example.com",
+                        "clientName": "Bob The Builder",
+                        "serviceName": "Annual Checkup",
+                        "startTime": "2024-11-01 at 10:00 AM",
+                        "locationName": "City General Hospital"
+                        # "reason" could be added here if available from cancellation source
+                    }
+                })
+            }
+        ]
+    }
+    print("\n--- Testing BOOKING_CANCELLED Notification ---")
+    response = lambda_handler(test_event_cancelled, {})
+    print(json.dumps(response, indent=2))
+
+    test_event_rejected = {
+        "Records": [
+            {
+                "messageId": "msg-rejected-001",
+                "body": json.dumps({
+                    "bookingId": "booking789-provisional",
+                    "notificationType": "BOOKING_REJECTED",
+                    "messageDetails": {
+                        "recipient": "client.rejected@example.com",
+                        "clientName": "Charlie Brown",
+                        "serviceName": "Specialist Consultation",
+                        "startTime": "2024-12-05 at 3:30 PM",
+                        "locationName": "Specialty Clinic North",
+                        "reason": "The specialist is unfortunately unavailable at your requested time. Please try an alternative slot."
+                    }
+                })
+            }
+        ]
+    }
+    print("\n--- Testing BOOKING_REJECTED Notification ---")
+    response = lambda_handler(test_event_rejected, {})
+    print(json.dumps(response, indent=2))
+
+    test_event_provisional = {
+        "Records": [
+            {
+                "messageId": "msg-provisional-001",
+                "body": json.dumps({
+                    "bookingId": "bookingABC-provisional",
+                    "notificationType": "PROVISIONAL_BOOKING_CREATED",
+                    "messageDetails": {
+                        "recipient": "client.provisional@example.com",
+                        "clientName": "Diana Prince",
+                        "serviceName": "Advanced Screening",
+                        "startTime": "2025-01-20 at 9:00 AM",
+                        "locationName": "Metropolis Health Services"
+                    }
+                })
+            }
+        ]
+    }
+    print("\n--- Testing PROVISIONAL_BOOKING_CREATED Notification ---")
+    response = lambda_handler(test_event_provisional, {})
+    print(json.dumps(response, indent=2))
+    
+    test_event_unknown_type = {
+        "Records": [
+            {
+                "messageId": "msg-unknown-001",
+                "body": json.dumps({
+                    "bookingId": "bookingXYZ",
+                    "notificationType": "SOME_NEW_UNHANDLED_TYPE",
+                    "messageDetails": {"recipient": "client.unknown@example.com", "clientName": "Mystery Guest"}
+                })
+            }
+        ]
+    }
+    print("\n--- Testing UNKNOWN_NOTIFICATION_TYPE ---")
+    response = lambda_handler(test_event_unknown_type, {})
+    print(json.dumps(response, indent=2))
+
+    test_event_missing_details = {
+        "Records": [
+            {
+                "messageId": "msg-missing-001",
+                "body": json.dumps({
+                    "bookingId": "bookingOops",
+                    "notificationType": "BOOKING_CONFIRMED"
+                    # messageDetails is missing
+                })
+            }
+        ]
+    }
+    print("\n--- Testing Missing messageDetails ---")
+    response = lambda_handler(test_event_missing_details, {})
+    print(json.dumps(response, indent=2))
+
+    test_event_invalid_json = {
+        "Records": [
+            {
+                "messageId": "msg-invalidjson-001",
+                "body": "This is definitely not JSON { bookingId: nope },"
+            }
+        ]
+    }
+    print("\n--- Testing Invalid JSON Body ---")
+    response = lambda_handler(test_event_invalid_json, {})
     print(json.dumps(response, indent=2))
