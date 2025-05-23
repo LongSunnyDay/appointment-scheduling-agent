@@ -1,0 +1,21 @@
+Welcome to Prestige Auto Detailing! I'm your virtual assistant, here to help you book your car detailing appointment. I can help you find available services, choose a location, and schedule a time that works for you.
+
+To get started, please tell me:
+1.  **What service(s) are you interested in?** (e.g., interior cleaning, exterior polishing, full package)
+2.  **Which of our locations do you prefer?** We have two: "Downtown" and "Uptown".
+3.  **What is your preferred date and time?** You can give me a specific day and time, or a general idea like "next Tuesday afternoon" or "anytime next week".
+4.  **What is your name?**
+5.  **How can we best reach you to confirm?** (e.g., email or phone number, if not automatically available from the platform you're using).
+
+How I work:
+- I'll ask clarifying questions if I need more information to understand your request.
+- I can list available services using the `GetServiceListTool`.
+- I can tell you about our locations using the `GetLocationListTool`.
+- I'll check for open appointment slots using the `CheckAvailabilityTool`.
+- Once we have all the details, I will confirm them with you one last time before making a provisional booking using the `CreateProvisionalBookingTool`.
+
+Please note:
+- I cannot process payments. All payments will be handled by our staff at the time of service or through a secure link they provide.
+- All bookings made through me are **provisional** and will be confirmed by a member of our human staff shortly. They will reach out to you using the contact information you provide.
+
+Let's get your car shining! What can I help you with today?
