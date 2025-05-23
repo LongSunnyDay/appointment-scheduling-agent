@@ -1,0 +1,11 @@
+boto3>=1.20.0
+google-api-python-client>=2.0.0
+google-auth-httplib2>=0.1.0
+google-auth-oauthlib>=0.7.0
+
+# oauth2client was previously listed but is generally superseded by google-auth libraries for new projects.
+# If specific legacy examples or needs arise for oauth2client, it can be added back.
+# For service account authentication, google-auth is preferred.
+
+# Other potential dependencies:
+# aws-lambda-powertools # For structured logging, metrics, tracing, etc.

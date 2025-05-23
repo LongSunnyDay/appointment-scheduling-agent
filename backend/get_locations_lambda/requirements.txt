@@ -1,0 +1,4 @@
+boto3>=1.20.0  # For AWS SDK (DynamoDB, etc.)
+
+# Other potential dependencies:
+# aws-lambda-powertools

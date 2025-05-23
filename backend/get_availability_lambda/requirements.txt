@@ -1,0 +1,6 @@
+boto3>=1.20.0  # For AWS SDK (DynamoDB, etc.)
+
+# Other potential dependencies for actual implementation:
+# aws-lambda-powertools
+# datetime # Standard library, but good to remember for date/time manipulations
+# pytz # For timezone handling if dealing with different timezones for locations/users
