@@ -3,9 +3,13 @@
 # --- VPC ---
 resource "aws_vpc" "main" {
   cidr_block = "10.0.0.0/16"
+  enable_dns_hostnames = true
+  enable_dns_support   = true
 
   tags = {
-    Name = "main-vpc"
+    Name        = "main-vpc"
+    Environment = "dev"
+    Project     = "DetailingCenter"
   }
 }
 
@@ -17,7 +21,9 @@ resource "aws_subnet" "public_subnet_az1" {
   availability_zone = "us-east-1a" # Or your desired AZ
 
   tags = {
-    Name = "public-subnet-az1"
+    Name        = "public-subnet-az1"
+    Environment = "dev"
+    Project     = "DetailingCenter"
   }
 }
 
@@ -27,7 +33,9 @@ resource "aws_subnet" "public_subnet_az2" {
   availability_zone = "us-east-1b" # Or your desired AZ
 
   tags = {
-    Name = "public-subnet-az2"
+    Name        = "public-subnet-az2"
+    Environment = "dev"
+    Project     = "DetailingCenter"
   }
 }
 
@@ -38,7 +46,9 @@ resource "aws_subnet" "private_subnet_az1" {
   availability_zone = "us-east-1a" # Or your desired AZ
 
   tags = {
-    Name = "private-subnet-az1"
+    Name        = "private-subnet-az1"
+    Environment = "dev"
+    Project     = "DetailingCenter"
   }
 }
 
@@ -48,7 +58,9 @@ resource "aws_subnet" "private_subnet_az2" {
   availability_zone = "us-east-1b" # Or your desired AZ
 
   tags = {
-    Name = "private-subnet-az2"
+    Name        = "private-subnet-az2"
+    Environment = "dev"
+    Project     = "DetailingCenter"
   }
 }
 
@@ -57,7 +69,9 @@ resource "aws_internet_gateway" "gw" {
   vpc_id = aws_vpc.main.id
 
   tags = {
-    Name = "main-igw"
+    Name        = "main-igw"
+    Environment = "dev"
+    Project     = "DetailingCenter"
   }
 }
 
@@ -73,7 +87,9 @@ resource "aws_nat_gateway" "nat_gw_az1" {
   subnet_id     = aws_subnet.public_subnet_az1.id
 
   tags = {
-    Name = "nat-gw-az1"
+    Name        = "nat-gw-az1"
+    Environment = "dev"
+    Project     = "DetailingCenter"
   }
 
   depends_on = [aws_internet_gateway.gw]
@@ -90,7 +106,9 @@ resource "aws_nat_gateway" "nat_gw_az2" {
   subnet_id     = aws_subnet.public_subnet_az2.id
 
   tags = {
-    Name = "nat-gw-az2"
+    Name        = "nat-gw-az2"
+    Environment = "dev"
+    Project     = "DetailingCenter"
   }
 
   depends_on = [aws_internet_gateway.gw]
@@ -107,7 +125,9 @@ resource "aws_route_table" "public_rt" {
   }
 
   tags = {
-    Name = "public-route-table"
+    Name        = "public-route-table"
+    Environment = "dev"
+    Project     = "DetailingCenter"
   }
 }
 
@@ -132,7 +152,9 @@ resource "aws_route_table" "private_rt_az1" {
   }
 
   tags = {
-    Name = "private-route-table-az1"
+    Name        = "private-route-table-az1"
+    Environment = "dev"
+    Project     = "DetailingCenter"
   }
 }
 
@@ -152,7 +174,9 @@ resource "aws_route_table" "private_rt_az2" {
   }
 
   tags = {
-    Name = "private-route-table-az2"
+    Name        = "private-route-table-az2"
+    Environment = "dev"
+    Project     = "DetailingCenter"
   }
 }
 

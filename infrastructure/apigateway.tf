@@ -1,10 +1,25 @@
 # Terraform configuration for API Gateway (HTTP API)
 
+variable "create_booking_lambda_arn" {
+  description = "ARN of the Create Booking Lambda function"
+  type        = string
+  # Example default - replace with actual ARN or mechanism to get it (e.g., data source, module output)
+  default     = "arn:aws:lambda:us-east-1:123456789012:function:create_booking_lambda_name_placeholder"
+}
+
 # --- API Gateway v2 HTTP API ---
 resource "aws_apigatewayv2_api" "main_api" {
   name          = "ClientRegistrationAPI"
   protocol_type = "HTTP"
   description   = "Main API Gateway for client registration and related services."
+
+  cors_configuration {
+    allow_origins = ["*"] # For development; restrict in production
+    allow_methods = ["POST", "GET", "OPTIONS", "PUT", "DELETE", "PATCH"] # Added GET, OPTIONS and other common methods
+    allow_headers = ["Content-Type", "Authorization", "X-Amz-Date", "X-Api-Key", "X-Amz-Security-Token"] # Common headers
+    expose_headers = ["Date", "Content-Length"]
+    max_age = 300
+  }
 
   tags = {
     Name = "client-registration-api"
@@ -29,7 +44,23 @@ resource "aws_apigatewayv2_stage" "default_stage" {
   }
 }
 
-# --- Placeholder for Routes and Integrations ---
+# --- Integration for POST /bookings ---
+resource "aws_apigatewayv2_integration" "post_bookings_integration" {
+  api_id           = aws_apigatewayv2_api.main_api.id
+  integration_type = "AWS_PROXY" # For Lambda integration
+  integration_uri  = var.create_booking_lambda_arn
+  payload_format_version = "2.0"       # Recommended for new Lambda integrations
+}
+
+# --- Route for POST /bookings ---
+resource "aws_apigatewayv2_route" "post_bookings_route" {
+  api_id    = aws_apigatewayv2_api.main_api.id
+  route_key = "POST /bookings"
+  target    = "integrations/${aws_apigatewayv2_integration.post_bookings_integration.id}"
+}
+
+
+# --- Placeholder for Other Routes and Integrations ---
 
 # TODO: Add routes and integrations for Webhook Endpoints
 # - Instagram Webhook
@@ -107,18 +138,6 @@ resource "aws_apigatewayv2_stage" "default_stage" {
 #   api_id           = aws_apigatewayv2_api.main_api.id
 #   integration_type = "AWS_PROXY"
 #   integration_uri  = module.availability_lambda.function_arn # Example
-#   payload_format_version = "2.0"
-# }
-
-# - POST /bookings
-# resource "aws_apigatewayv2_route" "create_booking_route" {
-#   api_id    = aws_apigatewayv2_api.main_api.id
-#   route_key = "POST /bookings"
-# }
-# resource "aws_apigatewayv2_integration" "create_booking_integration" {
-#   api_id           = aws_apigatewayv2_api.main_api.id
-#   integration_type = "AWS_PROXY"
-#   integration_uri  = module.bookings_lambda.function_arn # Example
 #   payload_format_version = "2.0"
 # }
 
