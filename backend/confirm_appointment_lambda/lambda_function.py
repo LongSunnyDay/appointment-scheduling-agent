@@ -7,69 +7,161 @@ import boto3
 logger = logging.getLogger()
 logger.setLevel(os.environ.get("LOG_LEVEL", "INFO"))
 
-# Initialize Boto3 clients (e.g., for DynamoDB, SQS, SNS, Google Calendar client if needed)
-# dynamodb = boto3.resource('dynamodb')
-# appointments_table_name = os.environ.get('APPOINTMENTS_TABLE_NAME')
-# notification_sqs_url = os.environ.get('NOTIFICATION_SQS_URL') # Or SNS topic ARN
-# google_calendar_sync_sqs_url = os.environ.get('GOOGLE_CALENDAR_SYNC_SQS_URL')
+import datetime
+
+# Initialize Boto3 clients
+dynamodb = boto3.resource('dynamodb')
+sqs = boto3.client('sqs')
+
+appointments_table_name = os.environ.get('APPOINTMENTS_TABLE_NAME')
+notification_sqs_url = os.environ.get('NOTIFICATION_SQS_URL')
+google_calendar_sync_sqs_url = os.environ.get('GOOGLE_CALENDAR_SYNC_SQS_URL')
 
 def lambda_handler(event, context):
     """
     Handles incoming requests for the ConfirmAppointmentLambda.
-    Could be triggered by an API Gateway (e.g., POST /bookings/{id}/confirm),
-    or an SQS message from a confirmation link clicked by the user.
+    Triggered by an API Gateway (POST /bookings/{id}/confirm).
     """
     lambda_name = "ConfirmAppointmentLambda"
     logger.info(f"Received event for {lambda_name}: {json.dumps(event)}")
 
+    if not all([appointments_table_name, notification_sqs_url, google_calendar_sync_sqs_url]):
+        logger.error("Missing one or more environment variables: APPOINTMENTS_TABLE_NAME, NOTIFICATION_SQS_URL, GOOGLE_CALENDAR_SYNC_SQS_URL")
+        return {
+            "statusCode": 500,
+            "headers": {"Content-Type": "application/json"},
+            "body": json.dumps({"error": f"Configuration error in {lambda_name}."})
+        }
+    
+    appointments_table = dynamodb.Table(appointments_table_name)
+
     try:
-        # TODO: Implement ConfirmAppointmentLambda logic
-        # 1. Extract bookingId (and potentially a confirmation token) from event.
-        # 2. Validate the bookingId and token.
-        # 3. Fetch the booking from DynamoDB (AppointmentsTable).
-        # 4. Check if the booking status is 'pending_confirmation' or similar.
-        # 5. Update the booking status to 'confirmed' in DynamoDB.
-        # 6. Trigger Google Calendar Sync Lambda (e.g., by sending a message to an SQS queue).
-        # 7. Send a confirmation notification to the client (e.g., via SQS to NotificationLambda or SNS).
-        # 8. Send a notification to staff.
-
-        # Placeholder response
-        response_message = f"{lambda_name} executed successfully. Implementation pending."
+        # 1. Extract bookingId
+        if 'pathParameters' in event and event['pathParameters'] and 'id' in event['pathParameters']:
+            booking_id = event['pathParameters']['id']
+        else:
+            logger.warning("Booking ID not found in event pathParameters.")
+            return {
+                "statusCode": 400,
+                "headers": {"Content-Type": "application/json"},
+                "body": json.dumps({"error": "Missing booking ID in request path."})
+            }
         
-        # Example: Extracting bookingId (e.g., from API Gateway path or message body)
-        # booking_id = None
-        # if 'pathParameters' in event and event['pathParameters'] and 'id' in event['pathParameters']:
-        #     booking_id = event['pathParameters']['id']
-        # elif 'body' in event and event['body']:
-        #     try:
-        #         body = json.loads(event['body'])
-        #         booking_id = body.get('bookingId')
-        #     except json.JSONDecodeError:
-        #         logger.error("Invalid JSON in body for bookingId extraction.")
-        
-        # if booking_id:
-        #     logger.info(f"Booking ID to confirm: {booking_id}")
-        # else:
-        #     logger.warning("Booking ID not found in event.")
-            # return {
-            #     "statusCode": 400,
-            #     "body": json.dumps({"error": "Missing booking ID."})
-            # }
+        logger.info(f"Attempting to confirm booking: {booking_id}")
 
+        # 2. Fetch the booking from DynamoDB
+        try:
+            response = appointments_table.get_item(Key={'bookingId': booking_id})
+            booking_item = response.get('Item')
+        except Exception as e:
+            logger.error(f"Error fetching booking {booking_id} from DynamoDB: {e}", exc_info=True)
+            return {
+                "statusCode": 500,
+                "headers": {"Content-Type": "application/json"},
+                "body": json.dumps({"error": "Failed to fetch booking details."})
+            }
 
-        logger.info(response_message)
+        # 3. Validate the booking
+        if not booking_item:
+            logger.warning(f"Booking {booking_id} not found.")
+            return {
+                "statusCode": 404,
+                "headers": {"Content-Type": "application/json"},
+                "body": json.dumps({"error": f"Booking {booking_id} not found."})
+            }
+
+        current_status = booking_item.get('status')
+        if current_status != 'pending_confirmation':
+            logger.warning(f"Booking {booking_id} status is '{current_status}', not 'pending_confirmation'. Cannot confirm.")
+            return {
+                "statusCode": 409, # Conflict
+                "headers": {"Content-Type": "application/json"},
+                "body": json.dumps({"error": f"Booking {booking_id} cannot be confirmed. Current status: {current_status}."})
+            }
+
+        # 4. Update the booking status to 'confirmed'
+        updated_at = datetime.datetime.utcnow().isoformat()
+        try:
+            update_response = appointments_table.update_item(
+                Key={'bookingId': booking_id},
+                UpdateExpression="SET #status = :status_val, #updatedAt = :updatedAt_val",
+                ExpressionAttributeNames={
+                    '#status': 'status',
+                    '#updatedAt': 'updatedAt'
+                },
+                ExpressionAttributeValues={
+                    ':status_val': 'confirmed',
+                    ':updatedAt_val': updated_at
+                },
+                ReturnValues="ALL_NEW" 
+            )
+            confirmed_booking = update_response.get('Attributes', {})
+            logger.info(f"Booking {booking_id} status updated to confirmed. Details: {json.dumps(confirmed_booking)}")
+        except Exception as e:
+            logger.error(f"Error updating booking {booking_id} status in DynamoDB: {e}", exc_info=True)
+            return {
+                "statusCode": 500,
+                "headers": {"Content-Type": "application/json"},
+                "body": json.dumps({"error": "Failed to update booking status."})
+            }
+
+        # 5. Send a message to GOOGLE_CALENDAR_SYNC_SQS_URL
+        calendar_message_body = {
+            "bookingId": booking_id,
+            "action": "CREATE_EVENT", # Indicate action for Google Calendar Sync Lambda
+            "serviceId": booking_item.get("serviceId"),
+            "locationId": booking_item.get("locationId"),
+            "proposedStartTime": booking_item.get("proposedStartTime"),
+            "proposedEndTime": booking_item.get("proposedEndTime"),
+            "clientName": booking_item.get("clientDetails", {}).get("name"), # Assuming clientDetails structure
+            "clientEmail": booking_item.get("clientDetails", {}).get("email") # Assuming clientDetails structure
+        }
+        try:
+            sqs.send_message(
+                QueueUrl=google_calendar_sync_sqs_url,
+                MessageBody=json.dumps(calendar_message_body)
+            )
+            logger.info(f"Sent message to Google Calendar Sync SQS for booking {booking_id}: {json.dumps(calendar_message_body)}")
+        except Exception as e:
+            logger.error(f"Error sending message to Google Calendar Sync SQS for booking {booking_id}: {e}", exc_info=True)
+            # Non-critical error, proceed with client notification but log it.
+            # Potentially add to a dead-letter queue or retry mechanism for this SQS message later.
+
+        # 6. Send a message to NOTIFICATION_SQS_URL
+        notification_message_body = {
+            "bookingId": booking_id,
+            "notificationType": "BOOKING_CONFIRMED",
+            "recipient": booking_item.get("clientDetails", {}).get("email"), # Or phone, depending on notification prefs
+            "messageDetails": {
+                "clientName": booking_item.get("clientDetails", {}).get("name"),
+                "serviceName": booking_item.get("serviceName", "the service"), # Placeholder if not available
+                "startTime": booking_item.get("proposedStartTime"),
+                "locationName": booking_item.get("locationName", "our location") # Placeholder
+            }
+        }
+        try:
+            sqs.send_message(
+                QueueUrl=notification_sqs_url,
+                MessageBody=json.dumps(notification_message_body)
+            )
+            logger.info(f"Sent message to Notification SQS for booking {booking_id}: {json.dumps(notification_message_body)}")
+        except Exception as e:
+            logger.error(f"Error sending message to Notification SQS for booking {booking_id}: {e}", exc_info=True)
+            # Non-critical error, booking is confirmed. Log it.
+
+        # 7. Return success response
+        logger.info(f"Booking {booking_id} confirmed successfully.")
         return {
             "statusCode": 200,
-            "headers": {
-                "Content-Type": "application/json"
-            },
+            "headers": {"Content-Type": "application/json"},
             "body": json.dumps({
-                "message": response_message
+                "message": f"Booking {booking_id} confirmed successfully.",
+                "booking": confirmed_booking # Send back the updated booking item
             })
         }
 
-    except Exception as e:
-        logger.error(f"Error processing {lambda_name} request: {e}", exc_info=True)
+    except Exception as e: # Catch-all for any other unexpected errors
+        logger.error(f"Unexpected error in {lambda_name} for bookingId {event.get('pathParameters',{}).get('id', 'N/A')}: {e}", exc_info=True)
         return {
             "statusCode": 500,
             "headers": {
